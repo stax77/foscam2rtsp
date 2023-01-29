@@ -9,7 +9,7 @@ from updatedrequesthandler import UpdatedRequestHandler
 import threading
 import socket
 import io
-from rtp import DecodeRTPpacket
+import rtp
 
 # class SessionEntry :
 #     def __init__( self ) :
@@ -189,6 +189,7 @@ class S(UpdatedRequestHandler):
 
             #
             packet_num = 0
+            cseq_96_add = 0
 
             while tb == b'$' :
 
@@ -216,17 +217,22 @@ class S(UpdatedRequestHandler):
 
                 # read RTP packet
                 raw_rtp = self.readBytes( response.raw, length )
-                values = DecodeRTPpacket( bytes.hex( raw_rtp ) )
+                values = rtp.DecodeRTPpacket( bytes.hex( raw_rtp ) )
                 #print( values )
 
                 if len( raw_rtp ) != length :
                     print( f"failed to read {length} bytes!")
                     return
 
-                if len( raw_rtp ) > 60000 :
-                    raw_rtp = raw_rtp[0:60000]
+                #
+                if values["payload_type"] == 0 : # audio
+                    targetSocket.sendto( raw_rtp, ( udp_address, udp_port ) )
+                elif values["payload_type"] == 96 : # video
 
-                if values["payload_type"] == 96 :
+                    # handle split ?
+                    if len( raw_rtp ) > 60000 :
+                        raw_rtp = raw_rtp[0:60000]
+
                     targetSocket.sendto( raw_rtp, ( udp_address, udp_port ) )
 
                 #
