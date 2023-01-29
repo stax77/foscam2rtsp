@@ -9,6 +9,7 @@ from updatedrequesthandler import UpdatedRequestHandler
 import threading
 import socket
 import io
+from rtp import DecodeRTPpacket
 
 # class SessionEntry :
 #     def __init__( self ) :
@@ -92,6 +93,23 @@ class S(UpdatedRequestHandler):
         self.end_headers()
         #
 
+    def do_DESCRIBE( self ) :
+        #self.notimplemented()
+
+        content = "m=video 96 H264/90000/704/576\r\nm=audio 0 PCMU/8000/1\r\n"
+
+        cseq = self.headers["CSeq"]
+        self.send_response( 200 )
+        self.send_header( "CSeq", cseq )
+        self.send_header( "Content-Base", self.requestline )
+        self.send_header( "Content-Type", "application/sdp" )
+        self.send_header( "Content-Length", len( content ) )
+        self.end_headers()
+
+        self.wfile.write( content.encode( "ascii" ) )
+        
+
+
 
 # GET http://[IP]:[port]/livestream/[number]?action=play&media=[type] 
 # HTTP/1.1\r\n 
@@ -170,24 +188,52 @@ class S(UpdatedRequestHandler):
                 return              
 
             #
+            packet_num = 0
+
             while tb == b'$' :
 
                 # 
 #                print( "$ found" )
 
                 # skip 3 bytes
-                self.readBytes( response.raw, 3 )
+                raw_channel_id = self.readBytes( response.raw, 1 )
+                raw_reserve = self.readBytes( response.raw, 2 )
+                
+                #
 
                 # read length (int32, net-endianess)
-                raw_len = self.readBytes( response.raw, 4 )
-                len = int.from_bytes( raw_len, byteorder="big", signed=False )
+                raw_length = self.readBytes( response.raw, 4 )
+
+                if len( raw_length ) != 4 :
+                    print( "failed to read 4 bytes!")
+                    return
+
+                length = int.from_bytes( raw_length, byteorder="big", signed=False )
+
+                #
+                print( f"packet {packet_num}, channe_id {raw_channel_id}, length {length}" )
+
 
                 # read RTP packet
-                raw_rtp = self.readBytes( response.raw, len )
-                targetSocket.sendto( raw_rtp, ( udp_address, udp_port ) )
+                raw_rtp = self.readBytes( response.raw, length )
+                values = DecodeRTPpacket( bytes.hex( raw_rtp ) )
+                #print( values )
+
+                if len( raw_rtp ) != length :
+                    print( f"failed to read {length} bytes!")
+                    return
+
+                if len( raw_rtp ) > 60000 :
+                    raw_rtp = raw_rtp[0:60000]
+
+                if values["payload_type"] == 96 :
+                    targetSocket.sendto( raw_rtp, ( udp_address, udp_port ) )
 
                 #
                 tb = self.readBytes( response.raw, 1 )
+                packet_num = packet_num + 1
+
+                #
             # checkbyte = response.iter_content( 1, False )
             # state = 0            
             # for byte in checkbyte :
@@ -268,11 +314,12 @@ class S(UpdatedRequestHandler):
     #     self.wfile.write(self._html("hi!"))
 
     def do_OPTIONS( self ) :
-        return
+        self.notimplemented()
+        #return
         # sliently ignore
-        print( "options" )
-        print( self.client_address )
-        print( self.headers )
+        #print( "options" )
+        #print( self.client_address )
+        #print( self.headers )
         
     # def do_HEAD(self):
     #     self._set_headers()
@@ -286,9 +333,6 @@ class S(UpdatedRequestHandler):
         print( self.command, "Not implemented" )
         self.send_response_only( 501, "Not implemented" )
         self.end_headers()
-
-    def do_DESCRIBE( self ) :
-        self.notimplemented()
 
     def do_ANNOUNCE( self ) :
         self.notimplemented()
