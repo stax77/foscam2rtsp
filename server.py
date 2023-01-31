@@ -101,7 +101,7 @@ class S(UpdatedRequestHandler):
         cseq = self.headers["CSeq"]
         self.send_response( 200 )
         self.send_header( "CSeq", cseq )
-        self.send_header( "Content-Base", self.requestline )
+        self.send_header( "Content-Base", self.path )
         self.send_header( "Content-Type", "application/sdp" )
         self.send_header( "Content-Length", len( content ) )
         self.end_headers()
@@ -136,7 +136,7 @@ class S(UpdatedRequestHandler):
         return result
 
 
-    def playThread( self, udp_address, udp_port ) :
+    def playThread( self, udp_address, udp_port, event ) :
 
         #
         targetSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 
@@ -160,7 +160,7 @@ class S(UpdatedRequestHandler):
         content = "Cseq: 1\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n"
         raw_content = content.encode( "utf-8" )
 
-        with requests.get( "http://192.168.1.77:80/livestream/11?action=play&media=video_audio_data", headers=headers, data=raw_content, stream=True ) as response :
+        with requests.get( "http://192.168.1.77:80/livestream/11?action=play&media=video", headers=headers, data=raw_content, stream=True ) as response :
             #print( response )
             #print( response.headers )
 
@@ -189,9 +189,9 @@ class S(UpdatedRequestHandler):
 
             #
             packet_num = 0
-            cseq_96_add = 0
+            cseq_96 = 0
 
-            while tb == b'$' :
+            while tb == b'$' and not event.is_set() :
 
                 # 
 #                print( "$ found" )
@@ -204,36 +204,51 @@ class S(UpdatedRequestHandler):
 
                 # read length (int32, net-endianess)
                 raw_length = self.readBytes( response.raw, 4 )
-
-                if len( raw_length ) != 4 :
-                    print( "failed to read 4 bytes!")
-                    return
+                # if len( raw_length ) != 4 :
+                #     print( "failed to read 4 bytes!")
+                #     return
 
                 length = int.from_bytes( raw_length, byteorder="big", signed=False )
 
                 #
-                print( f"packet {packet_num}, channe_id {raw_channel_id}, length {length}" )
+                #print( f"packet {packet_num}, channe_id {raw_channel_id}, length {length}" )
 
 
                 # read RTP packet
                 raw_rtp = self.readBytes( response.raw, length )
-                values = rtp.DecodeRTPpacket( bytes.hex( raw_rtp ) )
-                #print( values )
-
-                if len( raw_rtp ) != length :
-                    print( f"failed to read {length} bytes!")
-                    return
+                # if len( raw_rtp ) != length :
+                #     print( f"failed to read {length} bytes!")
+                #     return
 
                 #
-                if values["payload_type"] == 0 : # audio
-                    targetSocket.sendto( raw_rtp, ( udp_address, udp_port ) )
-                elif values["payload_type"] == 96 : # video
+                rtp_headers  = rtp.DecodeRTPpacket( bytes.hex( raw_rtp ) ) # payload is HEXed bytes
+                if rtp_headers["payload_type"] == 0 : # audio
 
+                    targetSocket.sendto( raw_rtp, ( udp_address, udp_port ) )
+
+                elif rtp_headers["payload_type"] == 96 : # video
+                    chunk_size = 45000
                     # handle split ?
-                    if len( raw_rtp ) > 60000 :
-                        raw_rtp = raw_rtp[0:60000]
-
-                    targetSocket.sendto( raw_rtp, ( udp_address, udp_port ) )
+                    payload = bytes.fromhex( rtp_headers['payload'] )
+                    if len( payload ) < chunk_size :
+                        rtp_headers['sequence_number'] = cseq_96
+                        cseq_96 = cseq_96 + 1
+                        rtp_data = bytes.fromhex( rtp.GenerateRTPpacket2( rtp_headers, bytes.hex( payload ) ) )
+                        targetSocket.sendto( rtp_data, ( udp_address, udp_port ) )
+                    else :
+                        chunk_start = 0
+                        while chunk_start < len( payload ) :
+                            #
+                            payload_block = payload[chunk_start:chunk_size]
+                            chunk_start = chunk_start + chunk_size
+                            #
+                            rtp_headers['sequence_number'] = cseq_96
+                            cseq_96 = cseq_96 + 1
+                            rtp_data = bytes.fromhex( rtp.GenerateRTPpacket2( rtp_headers, bytes.hex( payload_block ) ) )
+                            targetSocket.sendto( rtp_data, ( udp_address, udp_port ) )
+                            #
+                            
+                            
 
                 #
                 tb = self.readBytes( response.raw, 1 )
@@ -253,14 +268,14 @@ class S(UpdatedRequestHandler):
 
             #response.raw
 
-            print( "non matching $ found" )
+            print( "non matching $ found or thread break" )
 
             #response.iter_content( )
 
 
 #        response.close()
 
-        pass
+        #pass
 
     def do_PLAY( self ) :
         # проверить пераметры session
@@ -280,10 +295,12 @@ class S(UpdatedRequestHandler):
             self.send_response( 200 )
             #
             sessionInfo = self.sessionList[session]
-            thread = threading.Thread( target=self.playThread, args=( sessionInfo["udp_address"], sessionInfo["udp_port"] ), daemon=True )
+            event = threading.Event()
+            thread = threading.Thread( target=self.playThread, args=( sessionInfo["udp_address"], sessionInfo["udp_port"], event ), daemon=True )
             thread.start()
             # store threar for cleaning up?
             sessionInfo["thread"] = thread
+            sessionInfo["thread_event"] = event
         else :
             self.send_response( 404 )
 
@@ -304,7 +321,8 @@ class S(UpdatedRequestHandler):
         session = self.headers["Session"]
         #
         if session in self.sessionList :
-            self.sessionList.pop( session )
+            sessionInfo = self.sessionList.pop( session )
+            sessionInfo["thread_event"].set()
         #
         print( f"teardown: session {session}" )
         #transport = self.headers["Transport"]
