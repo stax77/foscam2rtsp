@@ -9,7 +9,7 @@ from updatedrequesthandler import UpdatedRequestHandler
 import threading
 import socket
 import io
-import rtp
+import rtp_work
 
 # class SessionEntry :
 #     def __init__( self ) :
@@ -221,7 +221,7 @@ class S(UpdatedRequestHandler):
                 #     return
 
                 #
-                rtp_headers  = rtp.DecodeRTPpacket( bytes.hex( raw_rtp ) ) # payload is HEXed bytes
+                rtp_headers  = rtp_work.DecodeRTPpacket( bytes.hex( raw_rtp ) ) # payload is HEXed bytes
                 if rtp_headers["payload_type"] == 0 : # audio
 
                     targetSocket.sendto( raw_rtp, ( udp_address, udp_port ) )
@@ -233,7 +233,7 @@ class S(UpdatedRequestHandler):
                     if len( payload ) < chunk_size :
                         rtp_headers['sequence_number'] = cseq_96
                         cseq_96 = cseq_96 + 1
-                        rtp_data = bytes.fromhex( rtp.GenerateRTPpacket2( rtp_headers, bytes.hex( payload ) ) )
+                        rtp_data = bytes.fromhex( rtp_work.GenerateRTPpacket2( rtp_headers, bytes.hex( payload ) ) )
                         targetSocket.sendto( rtp_data, ( udp_address, udp_port ) )
                     else :
                         chunk_start = 0
@@ -244,7 +244,7 @@ class S(UpdatedRequestHandler):
                             #
                             rtp_headers['sequence_number'] = cseq_96
                             cseq_96 = cseq_96 + 1
-                            rtp_data = bytes.fromhex( rtp.GenerateRTPpacket2( rtp_headers, bytes.hex( payload_block ) ) )
+                            rtp_data = bytes.fromhex( rtp_work.GenerateRTPpacket2( rtp_headers, bytes.hex( payload_block ) ) )
                             targetSocket.sendto( rtp_data, ( udp_address, udp_port ) )
                             #
                             
