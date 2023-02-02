@@ -104,6 +104,7 @@ class S(UpdatedRequestHandler):
             "a=rtpmap: 96 H264/90000", #/704/576
             # "m=audio 0 RTP/AVP 0",
             # "a=rtpmap: 0 PCMU/8000"
+            "\r\n"
         ]
         content = "\r\n".join( sdp ).encode( "ascii" )
 
@@ -169,9 +170,9 @@ class S(UpdatedRequestHandler):
                 #
             
             if len( raw_rtp ) < 65000 :
-                rtp_payload = bytes.fromhex( rtp_headers['payload'] ) # strip 4 bytes of NAL prefix
-                rtp_data = bytes.fromhex( rtp_work.GenerateRTPpacket2( rtp_headers, bytes.hex( rtp_payload ) ) )
-                self.sendRtp( rtp_data, sessionInfo )
+#                rtp_payload = bytes.fromhex( rtp_headers['payload'] )[4:] # strip 4 bytes of NAL prefix
+#                rtp_data = bytes.fromhex( rtp_work.GenerateRTPpacket2( rtp_headers, bytes.hex( rtp_payload ) ) )
+                self.sendRtp( raw_rtp, sessionInfo )
                 pass                            
 
 # GET http://[IP]:[port]/livestream/[number]?action=play&media=[type] 
