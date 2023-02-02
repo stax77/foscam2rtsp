@@ -29,34 +29,24 @@ class S(UpdatedRequestHandler):
     #sessionList = {}
 
     # :_
-    def _set_headers(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
+    # def _set_headers(self):
+    #     self.send_response(200)
+    #     self.send_header("Content-type", "text/html")
+    #     self.end_headers()
 
-    # remove later
-    def _html(self, message):
-        """This just generates an HTML document that includes `message`
-        in the body. Override, or re-write this do do more interesting stuff.
-        """
-        content = f"<html><body><h1>{message}</h1></body></html>"
-        return content.encode("utf8")  # NOTE: must return a bytes object!
+    # # remove later
+    # def _html(self, message):
+    #     """This just generates an HTML document that includes `message`
+    #     in the body. Override, or re-write this do do more interesting stuff.
+    #     """
+    #     content = f"<html><body><h1>{message}</h1></body></html>"
+    #     return content.encode("utf8")  # NOTE: must return a bytes object!
 
     def do_SETUP(self):
         # если в свойствах есть сессия, то ругнуться по RFC
         # если нет, то создать новую и записать параметры клиента + target path?
         # если стрим, уже вещается, то сделать что? )
         # отправить ответ клиенту
-        #print( f"setup, {self.headers}" )
-        #print( self.protocol_version )
-        #self._set_headers()
-        #self.wfile.write(self._html("hi!"))
-        #print( self.path )
-        #print( self.requestline )
-        #print( "setup" )
-        #print( self.client_address )
-        #print( self.headers )
-        #
         if "Session" in self.headers :
 
             session = self.headers["Session"]
@@ -111,10 +101,13 @@ class S(UpdatedRequestHandler):
         #content = "m=video 96 H264/90000/704/576\r\nm=audio 0 PCMU/8000/1\r\n"
         sdp = [
             "m=video 0 RTP/AVP 96",
-            "m=audio 0 RTP/AVP 0",
-            "a=rtpmap:96 H264/90000/704/576"
+            "a=rtpmap: 96 H264/90000", #/704/576
+            # "m=audio 0 RTP/AVP 0",
+            # "a=rtpmap: 0 PCMU/8000"
         ]
-        content = "\r\n".join( sdp ) + "\r\n"
+        content = "\r\n".join( sdp ).encode( "ascii" )
+
+        print( f"sdp: {content}" )
 
         self.send_response( 200 )
         self.send_header( "CSeq", self.headers["CSeq"] )
@@ -124,7 +117,7 @@ class S(UpdatedRequestHandler):
         self.send_header( "Content-Length", len( content ) )
         self.end_headers()
 
-        self.wfile.write( content.encode( "ascii" ) )
+        self.wfile.write( content )
         
 
     def readBytes( self, stream : io.BufferedIOBase, count ) :
@@ -176,7 +169,7 @@ class S(UpdatedRequestHandler):
                 #
             
             if len( raw_rtp ) < 65000 :
-                rtp_payload = bytes.fromhex( rtp_headers['payload'] )[4:] # strip 4 bytes of NAL prefix
+                rtp_payload = bytes.fromhex( rtp_headers['payload'] ) # strip 4 bytes of NAL prefix
                 rtp_data = bytes.fromhex( rtp_work.GenerateRTPpacket2( rtp_headers, bytes.hex( rtp_payload ) ) )
                 self.sendRtp( rtp_data, sessionInfo )
                 pass                            
@@ -210,26 +203,36 @@ class S(UpdatedRequestHandler):
             'Cseq' : 1,
             'Transport' : 'RTP/AVP/TCP;unicast;interleaved=0-1'
         }
-        raw_content = ("\r\n".join( key + ": " + str( content[key] ) for key in content ) + "\r\n").encode( "utf-8" )
+        raw_content = ("\r\n".join( key + ": " + str( content[key] ) for key in content ) + "\r\n").encode( "ascii" )
 
-        with requests.get( "http://192.168.1.77:80/livestream/11?action=play&media=video_audio_data", headers=headers, data=raw_content, stream=True ) as response :
+        with requests.get( "http://192.168.1.77:80/livestream/11?action=play&media=video", headers=headers, data=raw_content, stream=True ) as response :
 
             if response.status_code != 200 :
                 print( f"domofon request {response.status_code}, {response.headers}" )
                 return
 
             #
+#            hds = http.client.parse_headers( response.raw )
+ #           print( hds.keys() )
+
+            #
             tb = b''
+            hds = b''
 
             # skip headers
             while True :
                 tb = self.readBytes( response.raw, 1 )
                 if tb == b'$' : 
                     break
+                else :
+                    hds = hds + tb
 
             if tb != b'$' :
                 print( "initial $ not found" )
                 return              
+
+            #
+#            print( hds )
 
             #
             event = sessionInfo["thread_event"]
@@ -273,8 +276,8 @@ class S(UpdatedRequestHandler):
             # if not already playing
             if (not "thread" in sessionInfo) or (sessionInfo["thread"] is None) :
                 # store threar for cleaning up?
-                sessionInfo["thread"] = thread = threading.Thread( target=self.playThread, args=( sessionInfo, ), daemon=True )
                 sessionInfo["thread_event"] = threading.Event()
+                sessionInfo["thread"] = thread = threading.Thread( target=self.playThread, args=( sessionInfo, ), daemon=True )
                 #
                 thread.start()
         else :
@@ -294,6 +297,7 @@ class S(UpdatedRequestHandler):
         if session in self.sessionList :
             sessionInfo = self.sessionList.pop( session )
             sessionInfo["thread_event"].set()
+            sessionInfo["thread"].join()
             #
             sessionInfo["thread"] = None
             sessionInfo["thread_event"] = None
@@ -304,29 +308,11 @@ class S(UpdatedRequestHandler):
         self.end_headers()
         pass
 
-    # def do_GET(self):
-    #     self._set_headers()
-    #     self.wfile.write(self._html("hi!"))
-
     def do_OPTIONS( self ) :
-        #self.notimplemented()
-        #print( f"options, {self.headers}" )
-        #transport = self.headers["Transport"]
         self.send_response( 200 )
         self.send_header( "CSeq", self.headers["CSeq"] )
         self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
-        #self.send_header( "Session", session )
-        #self.send_header( "Transport", transport + ";server_port=15678-15679")
         self.end_headers()
-
-        #return
-        # sliently ignore
-        #print( "options" )
-        #print( self.client_address )
-        #print( self.headers )
-        
-    # def do_HEAD(self):
-    #     self._set_headers()
 
     # def do_POST(self):
     #     # Doesn't do anything with posted data
