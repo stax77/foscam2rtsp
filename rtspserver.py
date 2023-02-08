@@ -5,37 +5,15 @@ import socket
 import rtpsession
 from rtsprequesthandler import RTSPRequestHandler
 
-
-# class SessionEntry :
-#     def __init__( self ) :
-#         self.session_id = 0
-#         self.session_client = ()
-#         self.
-
 class RTSPServer(RTSPRequestHandler):
 
+    #
     def __init__( self, request, client_address, server ) :
         self.sessionList = {}
         super().__init__( request, client_address, server )
-        #asdlkasd
-        #qwiuoiqw
 
-    #sessionList = {}
 
-    # :_
-    # def _set_headers(self):
-    #     self.send_response(200)
-    #     self.send_header("Content-type", "text/html")
-    #     self.end_headers()
-
-    # # remove later
-    # def _html(self, message):
-    #     """This just generates an HTML document that includes `message`
-    #     in the body. Override, or re-write this do do more interesting stuff.
-    #     """
-    #     content = f"<html><body><h1>{message}</h1></body></html>"
-    #     return content.encode("utf8")  # NOTE: must return a bytes object!
-
+    #
     def do_SETUP(self):
         # если в свойствах есть сессия, то ругнуться по RFC
         # если нет, то создать новую и записать параметры клиента + target path?
@@ -87,11 +65,10 @@ class RTSPServer(RTSPRequestHandler):
         self.send_header( "Session", session )
         self.send_header( "Transport", transport + f";server_port={source_port}-{source_port+1}")
         self.end_headers()
-        #
 
+
+    #
     def do_DESCRIBE( self ) :
-        #self.notimplemented()
-        #print( f"describe, {self.headers}" ) 
         #content = "m=video 96 H264/90000/704/576\r\nm=audio 0 PCMU/8000/1\r\n"
         sdp = [
             "m=video 0 RTP/AVP 96",
@@ -102,8 +79,6 @@ class RTSPServer(RTSPRequestHandler):
         ]
         content = "\r\n".join( sdp ).encode( "ascii" )
 
-        print( f"sdp: {content}" )
-
         self.send_response( 200 )
         self.send_header( "CSeq", self.headers["CSeq"] )
         self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
@@ -113,9 +88,9 @@ class RTSPServer(RTSPRequestHandler):
         self.end_headers()
 
         self.wfile.write( content )
-        
 
 
+    #
     def do_PLAY( self ) :
         # проверить пераметры session
         # если нет, то ругнуться по RFC
@@ -162,16 +137,12 @@ class RTSPServer(RTSPRequestHandler):
         self.end_headers()
         pass
 
+    #
     def do_OPTIONS( self ) :
         self.send_response( 200 )
         self.send_header( "CSeq", self.headers["CSeq"] )
         self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
         self.end_headers()
-
-    # def do_POST(self):
-    #     # Doesn't do anything with posted data
-    #     self._set_headers()
-    #     self.wfile.write(self._html("POST!"))
 
     def notimplemented( self ) :
         print( self.command, "Not implemented" )
