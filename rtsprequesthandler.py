@@ -1,7 +1,7 @@
 import http.server
 from http import HTTPStatus
 
-class UpdatedRequestHandler(http.server.BaseHTTPRequestHandler) :
+class RTSPRequestHandler(http.server.BaseHTTPRequestHandler) :
 
     protocol_version = "RTSP/1.0"
 
