@@ -1,32 +1,42 @@
 import http.server
 import argparse
-import rtspserver
+import rtsprequesthandler
+import cfg
 
-def run(server_class=http.server.HTTPServer, handler_class=rtspserver.RTSPServer, addr="localhost", port=554):
+def run( server_class=http.server.HTTPServer, handler_class=rtsprequesthandler.RTSPRequestHandler, addr="localhost", port=554 ):
     server_address = (addr, port)
     print(f"Starting httpd server on {addr}:{port}")
-    httpd = server_class(server_address, handler_class)
+    httpd = server_class( server_address, handler_class )
     try :
       httpd.serve_forever()
     except KeyboardInterrupt :
-      httpd.server_close() 
-
+      pass
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description="Run a simple HTTP server")
-    parser.add_argument(
-        "-l",
-        "--listen",
-        default="0.0.0.0",
-        help="Specify the IP address on which the server listens",
-    )
-    parser.add_argument(
-        "-p",
-        "--port",
-        type=int,
-        default=554,
-        help="Specify the port on which the server listens",
-    )
+    parser = argparse.ArgumentParser( description="Run a simple RTSP converter :)" )
+    # parser.add_argument(
+    #     "-l",
+    #     "--listen",
+    #     default="0.0.0.0",
+    #     help="Specify the IP address on which the server listens",
+    # )
+    # parser.add_argument(
+    #     "-p",
+    #     "--port",
+    #     type=int,
+    #     default=554,
+    #     help="Specify the port on which the server listens",
+    # )
+    # run( addr=args.listen, port=args.port )
+
+    parser.add_argument( "-i", "--ini", type=str, default="config.ini", help="Path of .ini file" )
     args = parser.parse_args()
-    run(addr=args.listen, port=args.port)
+
+    #
+    cfg.readConfig( args.ini )
+
+    #
+    server_port = cfg.getInt( "port" )
+    server_address = cfg.getString( "address" )
+    run( addr=server_address, port=server_port )
