@@ -1,86 +1,169 @@
-import http.server
-from http import HTTPStatus
+import uuid
+import re
+import threading
+import socket
+import rtpsession
+from basertsprequesthandler import BaseRTSPRequestHandler
 
-class RTSPRequestHandler(http.server.BaseHTTPRequestHandler) :
+class RTSPRequestHandler(BaseRTSPRequestHandler):
 
-    protocol_version = "RTSP/1.0"
+    #
+    def __init__( self, request, client_address, server ) :
+        self.sessionList = {}
+        super().__init__( request, client_address, server )
 
-    def parse_request(self):
-        """Parse a request (internal).
 
-        The request should be stored in self.raw_requestline; the results
-        are in self.command, self.path, self.request_version and
-        self.headers.
+    #
+    def do_SETUP(self):
+        # если в свойствах есть сессия, то ругнуться по RFC
+        # если нет, то создать новую и записать параметры клиента + target path?
+        # если стрим, уже вещается, то сделать что? )
+        # отправить ответ клиенту
+        if "Session" in self.headers :
 
-        Return True for success, False for failure; on failure, any relevant
-        error response has already been sent back.
+            session = self.headers["Session"]
+            sessionInfo = self.sessionList[session]
 
-        """
-        self.command = None  # set in case of error on the first line
-        self.request_version = version = self.default_request_version
-        self.close_connection = True
-        requestline = str(self.raw_requestline, 'iso-8859-1')
-        requestline = requestline.rstrip('\r\n')
-        self.requestline = requestline
-        words = requestline.split()
-        if len(words) == 0:
-            return False
+        else :
 
-        if len(words) >= 3:  # Enough to determine protocol version
-            version = words[-1]
-            try:
-                if not version.startswith('RTSP/'):
-                    raise ValueError
-                base_version_number = version.split('/', 1)[1]
-                version_number = base_version_number.split(".")
-                # RFC 2145 section 3.1 says there can be only one "." and
-                #   - major and minor numbers MUST be treated as
-                #      separate integers;
-                #   - HTTP/2.4 is a lower version than HTTP/2.13, which in
-                #      turn is lower than HTTP/12.3;
-                #   - Leading zeros MUST be ignored by recipients.
-                if len(version_number) != 2:
-                    raise ValueError
-                version_number = int(version_number[0]), int(version_number[1])
-            except (ValueError, IndexError):
-                self.send_error(
-                    HTTPStatus.BAD_REQUEST,
-                    "Bad request version (%r)" % version)
-                return False
+            # create sesstion ID and source socket
+            session = uuid.uuid4().hex
 
-            if version_number != (1, 0):
-                self.send_error(
-                    HTTPStatus.HTTP_VERSION_NOT_SUPPORTED,
-                    "Invalid RTSP version (%s)" % base_version_number)
-                return False
-            self.request_version = version
-            self.close_connection = False
+            source_socket = socket.socket( socket.AF_INET, socket.SOCK_DGRAM )
+            source_socket.bind( ( '', 0 ) )
 
-        if len(words) != 3 :
-            self.send_error(
-                HTTPStatus.BAD_REQUEST,
-                "Bad request syntax (%r)" % requestline)
-            return False
+            sessionInfo = { "session" : session, "client" : self.client_address, "source_socket" : source_socket }
+            self.sessionList.update( { session : sessionInfo } )
 
-        command, path = words[:2]
-        self.command, self.path = command, path
+        # update transport info
+        transport = self.headers["Transport"]
+        
+        reg = re.search( "client_port=(\d+)-(?:\d+)", transport )
+        if reg is None :
+            self.send_response( 400, "Bad Client Port" )
+            self.send_header( "CSeq", self.headers["CSeq"] )
+            self.end_headers()
+            return
 
-        # Examine the headers and look for a Connection directive.
-        try:
-            self.headers = http.client.parse_headers(self.rfile,
-                                                     _class=self.MessageClass)
-        except http.client.LineTooLong as err:
-            self.send_error(
-                HTTPStatus.REQUEST_HEADER_FIELDS_TOO_LARGE,
-                "Line too long",
-                str(err))
-            return False
-        except http.client.HTTPException as err:
-            self.send_error(
-                HTTPStatus.REQUEST_HEADER_FIELDS_TOO_LARGE,
-                "Too many headers",
-                str(err)
-            )
-            return False
+        udp_port = int( reg.group( 1 ) )
+        udp_address = self.client_address[0]
 
-        return True
+        sessionInfo["transport"] = transport
+        sessionInfo["udp_address"] = udp_address
+        sessionInfo["udp_port"] = udp_port
+
+        # get source socket port
+        ( _, source_port ) = sessionInfo["source_socket"].getsockname() 
+
+        #
+        #print( f"setup: session {session} for client {self.client_address}" )
+
+        #
+        self.send_response( 200 )
+        self.send_header( "CSeq", self.headers["CSeq"] )
+        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
+        self.send_header( "Session", session )
+        self.send_header( "Transport", transport + f";server_port={source_port}-{source_port+1}")
+        self.end_headers()
+
+
+    #
+    def do_DESCRIBE( self ) :
+        #content = "m=video 96 H264/90000/704/576\r\nm=audio 0 PCMU/8000/1\r\n"
+        sdp = [
+            "m=video 0 RTP/AVP 96",
+            "a=rtpmap: 96 H264/90000", #/704/576
+            # "m=audio 0 RTP/AVP 0",
+            # "a=rtpmap: 0 PCMU/8000"
+            "\r\n"
+        ]
+        content = "\r\n".join( sdp ).encode( "ascii" )
+
+        self.send_response( 200 )
+        self.send_header( "CSeq", self.headers["CSeq"] )
+        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
+        self.send_header( "Content-Base", self.path )
+        self.send_header( "Content-Type", "application/sdp" )
+        self.send_header( "Content-Length", len( content ) )
+        self.end_headers()
+
+        self.wfile.write( content )
+
+
+    #
+    def do_PLAY( self ) :
+        # проверить пераметры session
+        # если нет, то ругнуться по RFC
+        # добавить эту сессию к списку слушателей для потока
+        # запустить поток, если не запущен
+        # сказать клиенту ок 
+        session = self.headers["Session"]
+        if session in self.sessionList :
+            self.send_response( 200 )
+            #
+            sessionInfo = self.sessionList[session]
+            # if not already playing
+            if (not "thread" in sessionInfo) or (sessionInfo["thread"] is None) :
+                # store threar for cleaning up?
+                sessionInfo["thread_event"] = threading.Event()
+                sessionInfo["thread"] = thread = threading.Thread( target=rtpsession.playThread, args=( sessionInfo, ), daemon=True )
+                #
+                thread.start()
+        else :
+            self.send_response( 404 )
+
+        self.send_header( "CSeq", self.headers["CSeq"] )
+        self.end_headers()
+
+    #
+    def do_TEARDOWN( self ) :
+        # проверить session
+        # елси нет, то ругнуться
+        # если есть, то убрать сессию из списка слушателей
+        # если это последний слушатель, то остановить поток
+        # ответить клиенту
+        session = self.headers["Session"]
+        if session in self.sessionList :
+            sessionInfo = self.sessionList.pop( session )
+            sessionInfo["thread_event"].set()
+            sessionInfo["thread"].join()
+            #
+            sessionInfo["thread"] = None
+            sessionInfo["thread_event"] = None
+        #
+        #print( f"teardown: session {session}" )
+        self.send_response( 200 )
+        self.send_header( "CSeq", self.headers["CSeq"] )
+        self.end_headers()
+        pass
+
+    #
+    def do_OPTIONS( self ) :
+        self.send_response( 200 )
+        self.send_header( "CSeq", self.headers["CSeq"] )
+        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
+        self.end_headers()
+
+    def notimplemented( self ) :
+        print( self.command, "Not implemented" )
+        self.send_response_only( 501, "Not implemented" )
+        self.end_headers()
+
+    def do_ANNOUNCE( self ) :
+        self.notimplemented()
+
+    def do_GET_PARAMETER( self ) :
+        self.notimplemented()
+
+    def do_PAUSE( self ) :
+        self.notimplemented()
+    
+    def do_SET_PARAMETER( self ) :
+        self.notimplemented()
+
+    def do_REDIRECT( self ) :
+        self.notimplemented()
+
+    def do_RECORD( self ) :
+        self.notimplemented()
+

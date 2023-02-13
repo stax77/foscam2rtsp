@@ -1,9 +1,10 @@
 import requests
 #from urllib3.util import SKIP_HEADER
 import urllib3
-from rtsprequesthandler import RTSPRequestHandler
+#from basertsprequesthandler import RTSPRequestHandler
 import io
 import rtphelper
+import cfg
 
 
 def readBytes( stream : io.BufferedIOBase, count ) :
@@ -54,7 +55,7 @@ def processRtp( raw_rtp, sessionInfo ) :
         #     time.sleep( 0.001 )
             
         
-        if len( raw_rtp ) < 65000 :
+        if len( raw_rtp ) < cfg.getInt( "udp_limit", 65000 ) :
 #                rtp_payload = bytes.fromhex( rtp_headers['payload'] )[4:] # strip 4 bytes of NAL prefix
 #                rtp_data = bytes.fromhex( rtp_work.GenerateRTPpacket2( rtp_headers, bytes.hex( rtp_payload ) ) )
             sendRtp( raw_rtp, sessionInfo )
@@ -80,9 +81,6 @@ def playThread( sessionInfo ) :
         'Connection' : 'Keep-Alive',
         'Cache-Control' : 'no-cache',
         'Authorization' : 'ipcam w54723',
-        #'Accept' : None,
-        #'Accept-Encoding' : urllib3.util.SKIP_HEADER,
-        #'Host' : urllib3.util.SKIP_HEADER
     }
 
     content = {
@@ -91,7 +89,7 @@ def playThread( sessionInfo ) :
     }
     raw_content = ("\r\n".join( key + ": " + str( content[key] ) for key in content ) + "\r\n").encode( "ascii" )
 
-    with requests.get( "http://192.168.1.77:80/livestream/11?action=play&media=video", headers=headers, data=raw_content, stream=True ) as response :
+    with requests.get( cfg.getStr( "intercom_url" ), headers=headers, data=raw_content, stream=True ) as response :
 
         if response.status_code != 200 :
             print( f"domofon request {response.status_code}, {response.headers}" )
