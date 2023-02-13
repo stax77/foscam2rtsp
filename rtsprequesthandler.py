@@ -1,86 +1,120 @@
-import http.server
-from http import HTTPStatus
+import re
+import sessionmanager
+import player
+from basertsprequesthandler import BaseRTSPRequestHandler
 
-class RTSPRequestHandler(http.server.BaseHTTPRequestHandler) :
+class RTSPRequestHandler(BaseRTSPRequestHandler):
 
-    protocol_version = "RTSP/1.0"
+    # 
+    def std_hdr( self ) :
+        self.send_header( "CSeq", self.headers["CSeq"] )
+        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
 
-    def parse_request(self):
-        """Parse a request (internal).
+    #
+    def do_SETUP( self ) :
+        #
+        #print( f"setup: {self.headers}" )
+        # extract transport data
+        transport = self.headers["Transport"]
+        # get client ports
+        reg = re.search( "client_port=(\d+)-(?:\d+)", transport )
+        if reg is None :
+            self.send_response( 400, "Bad Client Port" )
+            self.std_hdr()
+            self.end_headers()
+            return
+        #
+        target = ( self.client_address[0], int( reg.group( 1 ) ) )
 
-        The request should be stored in self.raw_requestline; the results
-        are in self.command, self.path, self.request_version and
-        self.headers.
+        # extract session
+        session = self.headers["Session"] if "Session" in self.headers else None
+        session = sessionmanager.setup( session, target )
+        if session is None :
+            self.send_response( 454, "Session not found" )
+            self.std_hdr()
+            self.end_headers()
+            return
 
-        Return True for success, False for failure; on failure, any relevant
-        error response has already been sent back.
+        # get source socket port
+        ( _, source_port ) = player._socket.getsockname() 
 
-        """
-        self.command = None  # set in case of error on the first line
-        self.request_version = version = self.default_request_version
-        self.close_connection = True
-        requestline = str(self.raw_requestline, 'iso-8859-1')
-        requestline = requestline.rstrip('\r\n')
-        self.requestline = requestline
-        words = requestline.split()
-        if len(words) == 0:
-            return False
+        #
+        self.send_response( 200 )
+        self.std_hdr()
+        self.send_header( "Session", session )
+        self.send_header( "Transport", transport + f";server_port={source_port}-{source_port+1}")
+        self.end_headers()
 
-        if len(words) >= 3:  # Enough to determine protocol version
-            version = words[-1]
-            try:
-                if not version.startswith('RTSP/'):
-                    raise ValueError
-                base_version_number = version.split('/', 1)[1]
-                version_number = base_version_number.split(".")
-                # RFC 2145 section 3.1 says there can be only one "." and
-                #   - major and minor numbers MUST be treated as
-                #      separate integers;
-                #   - HTTP/2.4 is a lower version than HTTP/2.13, which in
-                #      turn is lower than HTTP/12.3;
-                #   - Leading zeros MUST be ignored by recipients.
-                if len(version_number) != 2:
-                    raise ValueError
-                version_number = int(version_number[0]), int(version_number[1])
-            except (ValueError, IndexError):
-                self.send_error(
-                    HTTPStatus.BAD_REQUEST,
-                    "Bad request version (%r)" % version)
-                return False
+    #
+    def do_DESCRIBE( self ) :
+        #
+        sdp = [
+            # original pmap coming from intercom, incorrect
+            # content = "m=video 96 H264/90000/704/576\r\nm=audio 0 PCMU/8000/1\r\n"
+            # video map
+            "m=video 0 RTP/AVP 96",
+            "a=rtpmap: 96 H264/90000",
+            "a=control: stream=video",
+            # audio map
+            "m=audio 0 RTP/AVP 0",
+            "a=rtpmap: 0 PCMU/8000",
+            "a=control: stream=audio",
+            "\r\n"
+        ]
+        content = "\r\n".join( sdp ).encode( "ascii" )
 
-            if version_number != (1, 0):
-                self.send_error(
-                    HTTPStatus.HTTP_VERSION_NOT_SUPPORTED,
-                    "Invalid RTSP version (%s)" % base_version_number)
-                return False
-            self.request_version = version
-            self.close_connection = False
+        self.send_response( 200 )
+        self.std_hdr()
+        self.send_header( "Content-Base", self.path )
+        self.send_header( "Content-Type", "application/sdp" )
+        self.send_header( "Content-Length", len( content ) )
+        self.end_headers()
 
-        if len(words) != 3 :
-            self.send_error(
-                HTTPStatus.BAD_REQUEST,
-                "Bad request syntax (%r)" % requestline)
-            return False
+        self.wfile.write( content )
 
-        command, path = words[:2]
-        self.command, self.path = command, path
+    #
+    def do_PLAY( self ) :
+        session = self.headers["Session"]
+        rtsp_status = 200 if sessionmanager.play( session ) else 454
+        self.send_response( rtsp_status )
+        self.std_hdr()
+        self.end_headers()
 
-        # Examine the headers and look for a Connection directive.
-        try:
-            self.headers = http.client.parse_headers(self.rfile,
-                                                     _class=self.MessageClass)
-        except http.client.LineTooLong as err:
-            self.send_error(
-                HTTPStatus.REQUEST_HEADER_FIELDS_TOO_LARGE,
-                "Line too long",
-                str(err))
-            return False
-        except http.client.HTTPException as err:
-            self.send_error(
-                HTTPStatus.REQUEST_HEADER_FIELDS_TOO_LARGE,
-                "Too many headers",
-                str(err)
-            )
-            return False
+    #
+    def do_TEARDOWN( self ) :
+        session = self.headers["Session"]
+        rtsp_status = 200 if sessionmanager.teardown( session ) else 454
+        self.send_response( rtsp_status )
+        self.std_hdr()
+        self.end_headers()
 
-        return True
+    #
+    def do_OPTIONS( self ) :
+        self.send_response( 200 )
+        self.std_hdr()
+        self.end_headers()
+
+    def notimplemented( self ) :
+        print( self.command, "Not implemented" )
+        self.send_response( 501, "Not implemented" )
+        self.std_hdr()
+        self.end_headers()
+
+    def do_ANNOUNCE( self ) :
+        self.notimplemented()
+
+    def do_GET_PARAMETER( self ) :
+        self.notimplemented()
+
+    def do_PAUSE( self ) :
+        self.notimplemented()
+    
+    def do_SET_PARAMETER( self ) :
+        self.notimplemented()
+
+    def do_REDIRECT( self ) :
+        self.notimplemented()
+
+    def do_RECORD( self ) :
+        self.notimplemented()
+
