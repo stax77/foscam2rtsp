@@ -1,12 +1,38 @@
 import requests
 #from urllib3.util import SKIP_HEADER
-import urllib3
-#from basertsprequesthandler import RTSPRequestHandler
 import io
 import rtphelper
 import cfg
+import threading
+import socket
+import sessionmanager
 
+#
+_player_thread : threading.Thread = None
+_player_shutdown : threading.Event = threading.Event()
+_socket : socket.socket = None
 
+#
+_socket = socket.socket( socket.AF_INET, socket.SOCK_DGRAM )
+_socket.bind( ( '', 0 ) ) # replace to config entries
+
+#
+def start() :
+    global _player_thread
+    if _player_thread is None :
+        _player_shutdown.clear()
+        _player_thread = threading.Thread( target=playThread, daemon=True )
+        _player_thread.start()
+
+#
+def stop() :
+    global _player_thread
+    if not _player_thread is None :
+        _player_shutdown.set()
+        _player_thread.join()
+        _player_thread = None
+
+#
 def readBytes( stream : io.BufferedIOBase, count ) :
     # create array
     result = bytes()
@@ -19,21 +45,25 @@ def readBytes( stream : io.BufferedIOBase, count ) :
     #
     return result
 
-
-def sendRtp( raw_rtp, sessionInfo ) :
+#
+def sendRtp( raw_rtp, audio : bool ) : # true on audio, false on video
     # do not cache UDP as transport info can change ) overwise pack sending to separate class?
-    udp_address = sessionInfo["udp_address"]
-    udp_port = sessionInfo["udp_port"]
+    #udp_address = sessionInfo["udp_address"]
+    #udp_port = sessionInfo["udp_port"]
     #
-    sessionInfo["source_socket"].sendto( raw_rtp, ( udp_address, udp_port ) )
+    #sessionInfo["source_socket"].sendto( raw_rtp, ( udp_address, udp_port ) )
+    for ( _, si ) in sessionmanager._session_list.items() :
+        if si.play :
+            if (audio and si.audio) or (not audio and si.video) :
+                _socket.sendto( raw_rtp, si.target )
 
-
-def processRtp( raw_rtp, sessionInfo ) :
+#
+def processRtp( raw_rtp ) :
     #
     rtp_headers  = rtphelper.DecodeRTPpacket( bytes.hex( raw_rtp ) ) # payload is HEXed bytes
     if rtp_headers["payload_type"] == 0 : # audio
 
-        sendRtp( raw_rtp, sessionInfo )
+        sendRtp( raw_rtp, True )
         pass
 
     elif rtp_headers["payload_type"] == 96 : # video
@@ -58,7 +88,7 @@ def processRtp( raw_rtp, sessionInfo ) :
         if len( raw_rtp ) < cfg.getInt( "udp_limit", 65000 ) :
 #                rtp_payload = bytes.fromhex( rtp_headers['payload'] )[4:] # strip 4 bytes of NAL prefix
 #                rtp_data = bytes.fromhex( rtp_work.GenerateRTPpacket2( rtp_headers, bytes.hex( rtp_payload ) ) )
-            sendRtp( raw_rtp, sessionInfo )
+            sendRtp( raw_rtp, False )
             pass                            
 
 # GET http://[IP]:[port]/livestream/[number]?action=play&media=[type] 
@@ -73,14 +103,14 @@ def processRtp( raw_rtp, sessionInfo ) :
 # Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n 
 # \r\n 
 
-def playThread( sessionInfo ) :
+def playThread() :
 
     #
     headers = {
         'User-Agent' : 'HiIpcam/V100R003 VodClient/1.0.0',
         'Connection' : 'Keep-Alive',
         'Cache-Control' : 'no-cache',
-        'Authorization' : 'ipcam w54723',
+        'Authorization' : cfg.getStr( "intercom_auth" ),
     }
 
     content = {
@@ -89,10 +119,11 @@ def playThread( sessionInfo ) :
     }
     raw_content = ("\r\n".join( key + ": " + str( content[key] ) for key in content ) + "\r\n").encode( "ascii" )
 
+    #
     with requests.get( cfg.getStr( "intercom_url" ), headers=headers, data=raw_content, stream=True ) as response :
 
         if response.status_code != 200 :
-            print( f"domofon request {response.status_code}, {response.headers}" )
+            print( f"intercom failed request {response.status_code}, {response.headers}" )
             return
 
         #
@@ -119,11 +150,11 @@ def playThread( sessionInfo ) :
 #            print( hds )
 
         #
-        event = sessionInfo["thread_event"]
+        #event = sessionInfo["thread_event"]
         #
         while tb == b'$' :
 
-            if event.is_set() :
+            if _player_shutdown.is_set() :
                 return
 
             # skip 3 bytes
@@ -136,7 +167,7 @@ def playThread( sessionInfo ) :
 
             # read RTP packet
             raw_rtp = readBytes( response.raw, length )
-            processRtp( raw_rtp, sessionInfo )
+            processRtp( raw_rtp )
 
             # read next marker $
             tb = readBytes( response.raw, 1 )

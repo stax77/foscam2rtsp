@@ -1,87 +1,70 @@
-import uuid
 import re
-import threading
-import socket
-import rtpsession
+import sessionmanager
+import player
 from basertsprequesthandler import BaseRTSPRequestHandler
 
 class RTSPRequestHandler(BaseRTSPRequestHandler):
 
+    # 
+    def std_hdr( self ) :
+        self.send_header( "CSeq", self.headers["CSeq"] )
+        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
+
     #
-    def __init__( self, request, client_address, server ) :
-        self.sessionList = {}
-        super().__init__( request, client_address, server )
-
-
-    #
-    def do_SETUP(self):
-        # если в свойствах есть сессия, то ругнуться по RFC
-        # если нет, то создать новую и записать параметры клиента + target path?
-        # если стрим, уже вещается, то сделать что? )
-        # отправить ответ клиенту
-        if "Session" in self.headers :
-
-            session = self.headers["Session"]
-            sessionInfo = self.sessionList[session]
-
-        else :
-
-            # create sesstion ID and source socket
-            session = uuid.uuid4().hex
-
-            source_socket = socket.socket( socket.AF_INET, socket.SOCK_DGRAM )
-            source_socket.bind( ( '', 0 ) )
-
-            sessionInfo = { "session" : session, "client" : self.client_address, "source_socket" : source_socket }
-            self.sessionList.update( { session : sessionInfo } )
-
-        # update transport info
+    def do_SETUP( self ) :
+        #
+        #print( f"setup: {self.headers}" )
+        # extract transport data
         transport = self.headers["Transport"]
-        
+        # get client ports
         reg = re.search( "client_port=(\d+)-(?:\d+)", transport )
         if reg is None :
             self.send_response( 400, "Bad Client Port" )
-            self.send_header( "CSeq", self.headers["CSeq"] )
+            self.std_hdr()
+            self.end_headers()
+            return
+        #
+        target = ( self.client_address[0], int( reg.group( 1 ) ) )
+
+        # extract session
+        session = self.headers["Session"] if "Session" in self.headers else None
+        session = sessionmanager.setup( session, target )
+        if session is None :
+            self.send_response( 454, "Session not found" )
+            self.std_hdr()
             self.end_headers()
             return
 
-        udp_port = int( reg.group( 1 ) )
-        udp_address = self.client_address[0]
-
-        sessionInfo["transport"] = transport
-        sessionInfo["udp_address"] = udp_address
-        sessionInfo["udp_port"] = udp_port
-
         # get source socket port
-        ( _, source_port ) = sessionInfo["source_socket"].getsockname() 
-
-        #
-        #print( f"setup: session {session} for client {self.client_address}" )
+        ( _, source_port ) = player._socket.getsockname() 
 
         #
         self.send_response( 200 )
-        self.send_header( "CSeq", self.headers["CSeq"] )
-        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
+        self.std_hdr()
         self.send_header( "Session", session )
         self.send_header( "Transport", transport + f";server_port={source_port}-{source_port+1}")
         self.end_headers()
 
-
     #
     def do_DESCRIBE( self ) :
-        #content = "m=video 96 H264/90000/704/576\r\nm=audio 0 PCMU/8000/1\r\n"
+        #
         sdp = [
+            # original pmap coming from intercom, incorrect
+            # content = "m=video 96 H264/90000/704/576\r\nm=audio 0 PCMU/8000/1\r\n"
+            # video map
             "m=video 0 RTP/AVP 96",
-            "a=rtpmap: 96 H264/90000", #/704/576
-            # "m=audio 0 RTP/AVP 0",
-            # "a=rtpmap: 0 PCMU/8000"
+            "a=rtpmap: 96 H264/90000",
+            "a=control: stream=video",
+            # audio map
+            "m=audio 0 RTP/AVP 0",
+            "a=rtpmap: 0 PCMU/8000",
+            "a=control: stream=audio",
             "\r\n"
         ]
         content = "\r\n".join( sdp ).encode( "ascii" )
 
         self.send_response( 200 )
-        self.send_header( "CSeq", self.headers["CSeq"] )
-        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
+        self.std_hdr()
         self.send_header( "Content-Base", self.path )
         self.send_header( "Content-Type", "application/sdp" )
         self.send_header( "Content-Length", len( content ) )
@@ -89,64 +72,32 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
 
         self.wfile.write( content )
 
-
     #
     def do_PLAY( self ) :
-        # проверить пераметры session
-        # если нет, то ругнуться по RFC
-        # добавить эту сессию к списку слушателей для потока
-        # запустить поток, если не запущен
-        # сказать клиенту ок 
         session = self.headers["Session"]
-        if session in self.sessionList :
-            self.send_response( 200 )
-            #
-            sessionInfo = self.sessionList[session]
-            # if not already playing
-            if (not "thread" in sessionInfo) or (sessionInfo["thread"] is None) :
-                # store threar for cleaning up?
-                sessionInfo["thread_event"] = threading.Event()
-                sessionInfo["thread"] = thread = threading.Thread( target=rtpsession.playThread, args=( sessionInfo, ), daemon=True )
-                #
-                thread.start()
-        else :
-            self.send_response( 404 )
-
-        self.send_header( "CSeq", self.headers["CSeq"] )
+        rtsp_status = 200 if sessionmanager.play( session ) else 454
+        self.send_response( rtsp_status )
+        self.std_hdr()
         self.end_headers()
 
     #
     def do_TEARDOWN( self ) :
-        # проверить session
-        # елси нет, то ругнуться
-        # если есть, то убрать сессию из списка слушателей
-        # если это последний слушатель, то остановить поток
-        # ответить клиенту
         session = self.headers["Session"]
-        if session in self.sessionList :
-            sessionInfo = self.sessionList.pop( session )
-            sessionInfo["thread_event"].set()
-            sessionInfo["thread"].join()
-            #
-            sessionInfo["thread"] = None
-            sessionInfo["thread_event"] = None
-        #
-        #print( f"teardown: session {session}" )
-        self.send_response( 200 )
-        self.send_header( "CSeq", self.headers["CSeq"] )
+        rtsp_status = 200 if sessionmanager.teardown( session ) else 454
+        self.send_response( rtsp_status )
+        self.std_hdr()
         self.end_headers()
-        pass
 
     #
     def do_OPTIONS( self ) :
         self.send_response( 200 )
-        self.send_header( "CSeq", self.headers["CSeq"] )
-        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
+        self.std_hdr()
         self.end_headers()
 
     def notimplemented( self ) :
         print( self.command, "Not implemented" )
-        self.send_response_only( 501, "Not implemented" )
+        self.send_response( 501, "Not implemented" )
+        self.std_hdr()
         self.end_headers()
 
     def do_ANNOUNCE( self ) :

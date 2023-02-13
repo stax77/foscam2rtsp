@@ -5,7 +5,7 @@ import cfg
 
 def run( server_class=http.server.HTTPServer, handler_class=rtsprequesthandler.RTSPRequestHandler, addr="localhost", port=554 ):
     server_address = (addr, port)
-    print(f"Starting httpd server on {addr}:{port}")
+    print(f"Starting RTSP server on {addr}:{port}")
     httpd = server_class( server_address, handler_class )
     try :
       httpd.serve_forever()
@@ -38,5 +38,5 @@ if __name__ == "__main__":
 
     #
     server_port = cfg.getInt( "port" )
-    server_address = cfg.getString( "address" )
+    server_address = cfg.getStr( "address" )
     run( addr=server_address, port=server_port )
