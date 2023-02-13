@@ -1,9 +1,9 @@
-import http.server
+import basertspserver
 import argparse
 import rtsprequesthandler
 import cfg
 
-def run( server_class=http.server.HTTPServer, handler_class=rtsprequesthandler.RTSPRequestHandler, addr="localhost", port=554 ):
+def run( server_class=basertspserver.BaseRTSPServer, handler_class=rtsprequesthandler.RTSPRequestHandler, addr="localhost", port=554 ):
     server_address = (addr, port)
     print(f"Starting RTSP server on {addr}:{port}")
     httpd = server_class( server_address, handler_class )
