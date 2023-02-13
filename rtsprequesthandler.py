@@ -14,21 +14,34 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
     def do_SETUP( self ) :
         #
         #print( f"setup: {self.headers}" )
+        # should check here for compatible transport RTP/AVP;unicast;client_port=, we dont support TCP or interleaved
         # extract transport data
         transport = self.headers["Transport"]
         # get client ports
         reg = re.search( "client_port=(\d+)-(?:\d+)", transport )
         if reg is None :
-            self.send_response( 400, "Bad Client Port" )
+            self.send_response( 451, "Bad Client Port" )
             self.std_hdr()
             self.end_headers()
             return
         #
         target = ( self.client_address[0], int( reg.group( 1 ) ) )
 
+        #extract stream type
+        audio : bool = False
+        if "stream=audio" in self.path :
+            audio = True
+        elif "stream=video" in self.path :
+            audio = False
+        else :
+            self.send_response( 451, "Invalid stream option" )
+            self.std_hdr()
+            self.end_headers()
+            return
+
         # extract session
         session = self.headers["Session"] if "Session" in self.headers else None
-        session = sessionmanager.setup( session, target )
+        session = sessionmanager.setup( session, target, audio )
         if session is None :
             self.send_response( 454, "Session not found" )
             self.std_hdr()

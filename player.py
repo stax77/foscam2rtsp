@@ -6,6 +6,7 @@ import cfg
 import threading
 import socket
 import sessionmanager
+import http
 
 #
 _player_thread : threading.Thread = None
@@ -23,6 +24,7 @@ def start() :
         _player_shutdown.clear()
         _player_thread = threading.Thread( target=playThread, daemon=True )
         _player_thread.start()
+        print( f"player: player started" )
 
 #
 def stop() :
@@ -31,6 +33,7 @@ def stop() :
         _player_shutdown.set()
         _player_thread.join()
         _player_thread = None
+        print( f"player: player stopped" )
 
 #
 def readBytes( stream : io.BufferedIOBase, count ) :
@@ -52,10 +55,16 @@ def sendRtp( raw_rtp, audio : bool ) : # true on audio, false on video
     #udp_port = sessionInfo["udp_port"]
     #
     #sessionInfo["source_socket"].sendto( raw_rtp, ( udp_address, udp_port ) )
+
+#    print( f"process packet audio {audio}" )
+
     for ( _, si ) in sessionmanager._session_list.items() :
+ #       print( f"session {si.session} play {si.play} audio {si.audio}" )
         if si.play :
-            if (audio and si.audio) or (not audio and si.video) :
-                _socket.sendto( raw_rtp, si.target )
+            for ( ti_target, ti_audio ) in si.target_list :
+                if ti_audio == audio : 
+  #              print( f"send packet {si.session} {audio} {si.target}" )
+                    _socket.sendto( raw_rtp, ti_target )
 
 #
 def processRtp( raw_rtp ) :
@@ -120,60 +129,63 @@ def playThread() :
     raw_content = ("\r\n".join( key + ": " + str( content[key] ) for key in content ) + "\r\n").encode( "ascii" )
 
     #
-    with requests.get( cfg.getStr( "intercom_url" ), headers=headers, data=raw_content, stream=True ) as response :
+    try:
+        with requests.get( cfg.getStr( "intercom_url" ), headers=headers, data=raw_content, stream=True ) as response :
 
-        if response.status_code != 200 :
-            print( f"intercom failed request {response.status_code}, {response.headers}" )
-            return
-
-        #
-#            hds = http.client.parse_headers( response.raw )
-#           print( hds.keys() )
-
-        #
-        tb = b''
-        hds = b''
-
-        # skip headers
-        while True :
-            tb = readBytes( response.raw, 1 )
-            if tb == b'$' : 
-                break
-            else :
-                hds = hds + tb
-
-        if tb != b'$' :
-            print( "initial $ not found" )
-            return              
-
-        #
-#            print( hds )
-
-        #
-        #event = sessionInfo["thread_event"]
-        #
-        while tb == b'$' :
-
-            if _player_shutdown.is_set() :
+            if response.status_code != 200 :
+                print( f"intercom failed request {response.status_code}, {response.headers}" )
                 return
 
-            # skip 3 bytes
-            raw_channel_id = readBytes( response.raw, 1 )
-            raw_reserve = readBytes( response.raw, 2 )
+            #
+#            hds = http.client.parse_headers( response.raw )
+#            print( hds )
 
-            # read length (int32, net-endianess)
-            raw_length = readBytes( response.raw, 4 )
-            length = int.from_bytes( raw_length, byteorder="big", signed=False )
+            #
+            tb = b''
+            hds = b''
 
-            # read RTP packet
-            raw_rtp = readBytes( response.raw, length )
-            processRtp( raw_rtp )
+            # skip headers
+            while True :
+                tb = readBytes( response.raw, 1 )
+                if tb == b'$' : 
+                    break
+                else :
+                    hds = hds + tb
 
-            # read next marker $
-            tb = readBytes( response.raw, 1 )
+            if tb != b'$' :
+                print( "initial $ not found" )
+                return              
 
-        else :
+            #
+    #            print( hds )
 
-            print( "non matching $ found" )
+            #
+            #event = sessionInfo["thread_event"]
+            #
+            while tb == b'$' :
 
+                if _player_shutdown.is_set() :
+                    return
 
+                # skip 3 bytes
+                raw_channel_id = readBytes( response.raw, 1 )
+                raw_reserve = readBytes( response.raw, 2 )
+
+                # read length (int32, net-endianess)
+                raw_length = readBytes( response.raw, 4 )
+                length = int.from_bytes( raw_length, byteorder="big", signed=False )
+
+                # read RTP packet
+                raw_rtp = readBytes( response.raw, length )
+                processRtp( raw_rtp )
+
+                # read next marker $
+                tb = readBytes( response.raw, 1 )
+
+            else :
+
+                print( "non matching $ found" )
+
+    
+    except Exception as e :
+        print( "Exception occured" + str( type( e ) ) )

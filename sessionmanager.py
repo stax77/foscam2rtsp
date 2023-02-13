@@ -5,10 +5,9 @@ import uuid
 class _session :
     def __init__( self ) :
         self.session = None
-        self.video = False
-        self.audio = False
+        #self.audio = False # true for audio, false for video
         self.play = False
-        self.target : tuple( str, int ) # pair of IP:PORT
+        self.target_list : list(tuple(tuple( str, int ),bool)) = [] # list of tuples of tuples ( ( IP, PORT ), audio )
 
 # default session list is empty
 _session_list : dict[str,_session] = dict()
@@ -19,7 +18,7 @@ session - can be empty
 target_address - where to send packets
 target_port - SAB
 '''
-def setup( session, target ) :
+def setup( session, target, audio ) :
     # если в свойствах есть сессия, то ругнуться по RFC
     # если нет, то создать новую и записать параметры клиента + target path?
     # если стрим, уже вещается, то сделать что? )
@@ -36,7 +35,16 @@ def setup( session, target ) :
             return None
 
     # update ports
-    si.target = target
+    for ti in si.target_list :
+        if ti[0] == target :
+            # update only audio
+            ti[1] = audio
+            break
+    else :
+        si.target_list.append( ( target, audio ) )
+
+    #
+    #print( f"sm: setup: {si.session} {target} {audio}" )
 
     #
     return si.session
@@ -48,6 +56,7 @@ def play( session ) :
         si = _session_list[session]
         si.play = True
         updatePlayer()
+        return True
     else :
         # session not found
         return False
@@ -58,6 +67,7 @@ def teardown( session ) :
     if session in _session_list :
         _session_list.pop( session )
         updatePlayer()
+        return True
     else :
         # session not found
         return False
