@@ -2,12 +2,15 @@ import player
 import uuid
 
 #
+STREAM_AUDIO = 0
+STREAM_VIDEO = 1
+
 class _session :
     def __init__( self ) :
         self.session = None
         #self.audio = False # true for audio, false for video
         self.play = False
-        self.target_list : list(tuple(tuple( str, int ),bool)) = [] # list of tuples of tuples ( ( IP, PORT ), audio )
+        self.target_list : list(tuple(tuple( str, int ),int)) = [] # list of tuples of tuples ( ( IP, PORT ), STREAM_* )
 
 # default session list is empty
 _session_list : dict[str,_session] = dict()
@@ -18,7 +21,7 @@ session - can be empty
 target_address - where to send packets
 target_port - SAB
 '''
-def setup( session, target, audio ) :
+def setup( session, target, stream_type ) :
     # если в свойствах есть сессия, то ругнуться по RFC
     # если нет, то создать новую и записать параметры клиента + target path?
     # если стрим, уже вещается, то сделать что? )
@@ -38,10 +41,10 @@ def setup( session, target, audio ) :
     for ti in si.target_list :
         if ti[0] == target :
             # update only audio
-            ti[1] = audio
+            ti[1] = stream_type
             break
     else :
-        si.target_list.append( ( target, audio ) )
+        si.target_list.append( ( target, stream_type ) )
 
     #
     #print( f"sm: setup: {si.session} {target} {audio}" )
