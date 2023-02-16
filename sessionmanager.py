@@ -22,10 +22,7 @@ target_address - where to send packets
 target_port - SAB
 '''
 def setup( session, target, stream_type ) :
-    # если в свойствах есть сессия, то ругнуться по RFC
-    # если нет, то создать новую и записать параметры клиента + target path?
-    # если стрим, уже вещается, то сделать что? )
-    # отправить ответ клиенту
+    # create session ID if not exists
     if session is None :
         si = _session()
         si.session = uuid.uuid4().hex
@@ -52,12 +49,24 @@ def setup( session, target, stream_type ) :
     #
     return si.session
 
-''' return False on not found '''
+''' returns False on not found '''
 def play( session ) :
     #
     if session in _session_list :
         si = _session_list[session]
         si.play = True
+        updatePlayer()
+        return True
+    else :
+        # session not found
+        return False
+
+''' returns False on not found '''
+def pause( session ) :
+    #
+    if session in _session_list :
+        si = _session_list[session]
+        si.play = False
         updatePlayer()
         return True
     else :

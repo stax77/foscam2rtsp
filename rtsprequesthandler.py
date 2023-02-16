@@ -8,7 +8,7 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
     # 
     def std_hdr( self ) :
         self.send_header( "CSeq", self.headers["CSeq"] )
-        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, OPTIONS" )
+        self.send_header( "Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE, OPTIONS" )
 
     #
     def do_SETUP( self ) :
@@ -89,6 +89,14 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
     def do_PLAY( self ) :
         session = self.headers["Session"]
         rtsp_status = 200 if sessionmanager.play( session ) else 454
+        self.send_response( rtsp_status )
+        self.std_hdr()
+        self.end_headers()
+
+    #
+    def do_PAUSE( self ) :
+        session = self.headers["Session"]
+        rtsp_status = 200 if sessionmanager.pause( session ) else 454
         self.send_response( rtsp_status )
         self.std_hdr()
         self.end_headers()
