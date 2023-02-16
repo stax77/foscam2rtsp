@@ -67,11 +67,11 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
             # video map
             "m=video 0 RTP/AVP 96",
             "a=rtpmap: 96 H264/90000",
-            "a=control: stream=video",
+            "a=control:stream=video",
             # audio map
             "m=audio 0 RTP/AVP 0",
             "a=rtpmap: 0 PCMU/8000",
-            "a=control: stream=audio",
+            "a=control:stream=audio",
             "\r\n"
         ]
         content = "\r\n".join( sdp ).encode( "ascii" )
