@@ -14,7 +14,7 @@ def run( server_class=basertspserver.BaseRTSPServer, handler_class=rtsprequestha
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser( description="Run a simple RTSP converter :)" )
+    parser = argparse.ArgumentParser( description="Run RTSP converter :)" )
     # parser.add_argument(
     #     "-l",
     #     "--listen",
