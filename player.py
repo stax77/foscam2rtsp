@@ -6,7 +6,7 @@ import cfg
 import threading
 import socket
 import sessionmanager
-import http
+#import http
 
 #
 _player_thread : threading.Thread = None
