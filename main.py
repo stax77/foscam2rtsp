@@ -9,7 +9,7 @@ def run(
     handler_class=rtsprequesthandler.RTSPRequestHandler,
     addr="localhost",
     port=554,
-):
+) :
     server_address = (addr, port)
     print(f"Starting RTSP server on {addr}:{port}")
     httpd = server_class(server_address, handler_class)

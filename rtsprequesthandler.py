@@ -1,6 +1,7 @@
 import re
 import sessionmanager
 import player
+import cfg
 from basertsprequesthandler import BaseRTSPRequestHandler
 
 class RTSPRequestHandler(BaseRTSPRequestHandler):
@@ -14,9 +15,13 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
     def do_SETUP( self ) :
         #
         #print( f"setup: {self.headers}" )
-        # should check here for compatible transport RTP/AVP;unicast;client_port=, we dont support TCP or interleaved
         # extract transport data
         transport = self.headers["Transport"]
+
+        # TODO
+        # should check here for compatible transport RTP/AVP;unicast;client_port=, we dont support TCP or interleaved
+        # 461 Unsupported transport
+
         # get client ports
         reg = re.search( "client_port=(\d+)-(?:\d+)", transport )
         if reg is None :
@@ -28,11 +33,10 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
         target = ( self.client_address[0], int( reg.group( 1 ) ) )
 
         #extract stream type
-        audio : bool = False
         if "stream=audio" in self.path :
-            audio = True
+            audio = sessionmanager.STREAM_AUDIO
         elif "stream=video" in self.path :
-            audio = False
+            audio = sessionmanager.STREAM_VIDEO
         else :
             self.send_response( 451, "Invalid stream option" )
             self.std_hdr()
@@ -51,11 +55,15 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
         # get source socket port
         ( _, source_port ) = player._socket.getsockname() 
 
+        # add timeout value 
+        session_timeout = cfg.getInt( "session_timeout" )
+        addon = "" if session_timeout == 0 else ";timeout=" + str( session_timeout )
+
         #
         self.send_response( 200 )
         self.std_hdr()
-        self.send_header( "Session", session )
-        self.send_header( "Transport", transport + f";server_port={source_port}-{source_port+1}")
+        self.send_header( "Session", session + addon )
+        self.send_header( "Transport", transport + f";server_port={source_port}-{source_port+1}" )
         self.end_headers()
 
     #
@@ -111,12 +119,16 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
 
     #
     def do_OPTIONS( self ) :
+        if "Session" in self.headers :
+            sessionmanager.tick( self.headers["Session"] )
         self.send_response( 200 )
         self.std_hdr()
         self.end_headers()
 
     def notimplemented( self ) :
-        print( self.command, "Not implemented" )
+        if "Session" in self.headers :
+            sessionmanager.tick( self.headers["Session"] )
+        print( f"rtsp: command {self.command} not implemented" )
         self.send_response( 501, "Not implemented" )
         self.std_hdr()
         self.end_headers()
@@ -127,9 +139,6 @@ class RTSPRequestHandler(BaseRTSPRequestHandler):
     def do_GET_PARAMETER( self ) :
         self.notimplemented()
 
-    def do_PAUSE( self ) :
-        self.notimplemented()
-    
     def do_SET_PARAMETER( self ) :
         self.notimplemented()
 
