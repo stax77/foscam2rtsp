@@ -10,7 +10,7 @@ class BaseRTSPServer( http.server.HTTPServer ) :
 
         """
         ( ex_type, _, _ ) = sys.exc_info()
-        if ex_type != ConnectionAbortedError :
+        if ex_type != ConnectionAbortedError and ex_type != ConnectionResetError :
             super().handle_error( request, client_address )
 #        print('-'*40, file=sys.stderr)
         #print('Exception occurred during processing of request from', client_address, file=sys.stderr )

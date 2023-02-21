@@ -2,10 +2,24 @@ import player
 import uuid
 import datetime
 import cfg
+import io
+from typing import TypeAlias
 
 #
 STREAM_AUDIO = 0
 STREAM_VIDEO = 1
+
+TTYPE_SOCKET = 0
+TTYPE_STREAM = 1
+
+# some typing
+TargetAddress = tuple[ str, int ] # ip, port
+TargetStream = io.IOBase
+TargetType = int # TTYPE_*
+StreamType = int # STREAM_*
+TargetChannel = int
+Target = tuple[ StreamType, TargetType, TargetAddress, TargetStream, TargetChannel ]
+TargetList = list[Target]
 
 #
 class _session:
@@ -13,7 +27,7 @@ class _session:
         self.session = None
         # self.audio = False # true for audio, false for video
         self.play = False
-        self.target_list: list(tuple(tuple(str, int), int)) = []  # list of tuples of tuples ( ( IP, PORT ), STREAM_* )
+        self.target_list: TargetList = []  # list of tuples of tuples ( ( IP, PORT ), STREAM_* )
 #        self.last_update = datetime.today()
 
 
@@ -26,7 +40,8 @@ session - can be empty
 target_address - where to send packets
 target_port - SAB
 """
-def setup( session : str, target : tuple, stream_type : int ) -> _session | None :
+def setup( session : str, stream_type : StreamType, target_type : TargetType, target_address : TargetAddress, target_stream : TargetStream, target_channel : TargetChannel ) -> _session | None :
+    #print( f"sm: session {session}" )
     # create session ID if not exists
     if session is None:
         si = _session()
@@ -39,14 +54,26 @@ def setup( session : str, target : tuple, stream_type : int ) -> _session | None
             # session not found
             return None
 
-    # update ports
+    # update info
     for ti in si.target_list:
-        if ti[0] == target:
-            # update only audio
-            ti[1] = stream_type
-            break
+    
+        if ti[0] == stream_type : # found matching stream_type
+            
+            if target_type == TTYPE_STREAM :
+
+                if ti[1] == TTYPE_STREAM : # we only allow one session with stream type
+                    ti[3] = target_stream
+                    ti[4] = target_channel
+                    break
+
+            elif target_type == TTYPE_SOCKET :
+
+                if ti[1] == TTYPE_SOCKET and ti[2][0] == target_address[0] : # target IP address matches
+                    ti[2] = target_address # update ports
+                    break
+    
     else:
-        si.target_list.append( (target, stream_type) )
+        si.target_list.append( (stream_type, target_type, target_address, target_stream, target_channel ) )
 
     #
     tick_session( si )

@@ -1,5 +1,4 @@
 import requests
-
 # from urllib3.util import SKIP_HEADER
 import io
 import rtphelper
@@ -24,7 +23,7 @@ def start():
     # TODO: check that player has stopped and rerun the thread?
     if _player_thread is None:
         _player_shutdown.clear()
-        _player_thread = threading.Thread(target=player, daemon=True)
+        _player_thread = threading.Thread(target=player_wrapper, daemon=True)
         _player_thread.start()
         print(f"player: player started")
 
@@ -36,6 +35,15 @@ def stop():
         _player_thread.join()
         _player_thread = None
         print(f"player: player stopped")
+
+#
+def player_wrapper() :
+    global _player_thread
+    try:
+        player()
+    finally:
+        _player_shutdown.clear()
+        _player_thread = None
 
 #
 def read_bytes(stream: io.BufferedIOBase, count):
@@ -55,10 +63,24 @@ def send_rtp(raw_rtp, stream_type):
     # select sessions with active Play (== True)
     for (_, si) in sessionmanager._session_list.items():
         if si.play:
-            # select only targets with the same type
-            for (ti_target, ti_stream_type) in si.target_list:
-                if ti_stream_type == stream_type:
-                    _socket.sendto( raw_rtp, ti_target )
+            try:
+                # select only targets with the same type
+                for ( ti_stream_type, ti_target_type, ti_target_address, ti_target_stream, ti_target_channel ) in si.target_list:
+                    if ti_stream_type == stream_type:
+                        if ti_target_type == sessionmanager.TTYPE_SOCKET :
+                            if len(raw_rtp) < cfg.getInt("udp_limit", 65000) :
+                                _socket.sendto( raw_rtp, ti_target_address )
+                        else : # TTYPE_STREAM
+                            if not ti_target_stream.closed :
+                                ti_target_stream.write( b'$' )
+                                ti_target_stream.write( len( raw_rtp ).to_bytes( 2, byteorder="big", signed=False ) )
+                                ti_target_stream.write( ti_target_channel.to_bytes( 1, byteorder="big", signed=False ) )
+                                ti_target_stream.write( raw_rtp )
+                                ti_target_stream.flush()
+            except Exception as e:
+                # stop entire session. may be we need to stop only failed transport?
+                si.play = False
+                print( f"player: exception {e.with_traceback()} during sending packet in session {si.session}" )                        
 
 #
 def process_rtp(raw_rtp):
@@ -87,9 +109,7 @@ def process_rtp(raw_rtp):
         #     cseq_96 = cseq_96 + 1
         #     rtp_data = bytes.fromhex( rtp_work.GenerateRTPpacket2( rtp_headers, bytes.hex( payload_block ) ) )
         #     targetSocket.sendto( rtp_data, ( udp_address, udp_port ) )
-
-        if len(raw_rtp) < cfg.getInt("udp_limit", 65000):
-            send_rtp( raw_rtp, sessionmanager.STREAM_VIDEO )
+        send_rtp( raw_rtp, sessionmanager.STREAM_VIDEO )
 
 #
 def process_data(stream: io.BufferedIOBase):
@@ -126,11 +146,18 @@ def intercom_getstream() :
 #
 def intercomp_startcamera() :
     # ping intercom to toggle camera open
-    with requests.get( cfg.getStr( "intercom_startcamera_url" ) ) :
+    try:
+        with requests.get( cfg.getStr( "intercom_startcamera_url" ) ) :
+            pass
+    except http.client.RemoteDisconnected :
+        return
+    except Exception as e :
         pass
+        # silently eat e 
+        #print( f"player: intercom ping failed {e}" )
 
 #
-def player():
+def player() :
     #
     intercomp_startcamera()
     #
